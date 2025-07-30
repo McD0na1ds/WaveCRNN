@@ -1,0 +1,35 @@
+_target_: src.models.distillation_model.DistillationLightningModule
+num_classes: 3
+# Teacher model (DINOv2)
+teacher:
+  model_name: "dinov2-base"
+  freeze: true
+
+# Student model (Custom ViT + LSTM)
+student:
+  vit:
+    image_size: 224
+    patch_size: 16
+    num_classes: 3
+    dim: 384
+    depth: 6
+    heads: 8
+    mlp_dim: 768
+    dropout: 0.1
+    emb_dropout: 0.1
+  
+  lstm:
+    hidden_size: 384
+    num_layers: 3
+    dropout: 0.2
+    bidirectional: true
+
+# Loss weights
+loss_weights:
+  classification: 1.0
+  distillation: 3.0
+  
+# Training hyperparameters
+learning_rate: 2e-4
+weight_decay: 1e-4
+temperature: 3.0
