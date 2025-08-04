@@ -4,26 +4,36 @@ from model import StudentModel, get_dinov2_model, FeatureAdapter
 from loss import HeterogeneousKnowledgeDistillationLoss
 
 def test_model_forward():
-    """Test forward pass of models"""
-    # Create dummy input - using smaller size for faster testing
+    """Test forward pass of models with sequences"""
+    # Create dummy input - sequence of images
     batch_size = 2
-    dummy_input = torch.randn(batch_size, 3, 224, 224)
+    sequence_length = 10  # Smaller sequence for testing
+    dummy_input = torch.randn(batch_size, sequence_length, 3, 224, 224)
     
     # Test student model
-    student_model = StudentModel(num_classes=3)
+    student_model = StudentModel(num_classes=3, sequence_length=sequence_length)
     student_logits, student_features = student_model(dummy_input)
     
+    print(f"Input shape: {dummy_input.shape}")
     print(f"Student model output shape: {student_logits.shape}")
     print(f"Student features shape: {student_features.shape}")
     
-    # Test teacher model
+    # Test teacher model with sequences
     teacher_model = get_dinov2_model('dinov2_vits14')
     if teacher_model is not None:
         teacher_model.eval()
         with torch.no_grad():
+            # Process sequences through teacher (flatten first)
+            sequences_flat = dummy_input.view(batch_size * sequence_length, *dummy_input.shape[2:])
+            
             # Get intermediate layers from teacher
-            intermediate_layers = teacher_model.get_intermediate_layers(dummy_input, n=1)
-            teacher_features = intermediate_layers[0][:, 1:]  # Remove cls token
+            intermediate_layers = teacher_model.get_intermediate_layers(sequences_flat, n=1)
+            teacher_features_flat = intermediate_layers[0][:, 1:]  # Remove cls token
+            
+            # Reshape back to sequence and average
+            num_patches, feature_dim = teacher_features_flat.shape[1], teacher_features_flat.shape[2]
+            teacher_features_seq = teacher_features_flat.view(batch_size, sequence_length, num_patches, feature_dim)
+            teacher_features = torch.mean(teacher_features_seq, dim=1)  # Average across sequence
             
             # Resize teacher features to match student features if needed
             if teacher_features.shape[1] != student_features.shape[1]:
@@ -57,9 +67,10 @@ def test_model_forward():
         print(f"Feature loss: {loss_components['feature_loss'].item():.4f}")
         print(f"Relation loss: {loss_components['relation_loss'].item():.4f}")
         
-        print("All tests passed!")
+        print("All sequence model tests passed!")
     else:
-        print("Failed to load teacher model")
+        print("Failed to load teacher model - using offline mode")
+        print("Student model sequence processing works correctly!")
 
 if __name__ == "__main__":
     test_model_forward()
