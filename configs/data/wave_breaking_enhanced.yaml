@@ -1,9 +1,0 @@
-_target_: src.data.wave_datamodule.WaveDataModule
-
-data_dir: "./data"
-batch_size: 32
-num_workers: 4
-image_size: 224
-use_wave_augmentation: true
-use_weighted_sampling: true
-nested_folders: true  # 新增：支持嵌套文件夹结构
