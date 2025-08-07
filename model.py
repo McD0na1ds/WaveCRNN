@@ -67,33 +67,53 @@ class LightweightViT(nn.Module):
         return self.head(cls_token), x[:, 1:]  # Return classification and patch tokens
 
 
+# class LSTMClassifier(nn.Module):
+#     """LSTM module for temporal analysis of patch features"""
+#     def __init__(self, input_dim=384, hidden_dim=256, num_layers=2, num_classes=3, dropout=0.5):
+#         super().__init__()
+#         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers,
+#                            batch_first=True, dropout=dropout, bidirectional=True)
+#         self.attention = nn.MultiheadAttention(hidden_dim * 2, num_heads=8, batch_first=True)
+#         self.classifier = nn.Sequential(
+#             nn.Linear(hidden_dim * 2, hidden_dim),
+#             nn.ReLU(),
+#             nn.Dropout(dropout),
+#             nn.Linear(hidden_dim, num_classes)
+#         )
+#
+#     def forward(self, x):
+#         # x shape: (batch_size, seq_len, input_dim)
+#         lstm_out, _ = self.lstm(x)  # (batch_size, seq_len, hidden_dim*2)
+#
+#         # Apply attention to focus on important features
+#         attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
+#
+#         # Global average pooling
+#         pooled = torch.mean(attn_out, dim=1)  # (batch_size, hidden_dim*2)
+#
+#         # Classification
+#         output = self.classifier(pooled)
+#         return output
+
 class LSTMClassifier(nn.Module):
-    """LSTM module for temporal analysis of patch features"""
-    def __init__(self, input_dim=384, hidden_dim=256, num_layers=2, num_classes=3, dropout=0.5):
-        super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, 
-                           batch_first=True, dropout=dropout, bidirectional=True)
-        self.attention = nn.MultiheadAttention(hidden_dim * 2, num_heads=8, batch_first=True)
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_classes)
-        )
-        
-    def forward(self, x):
-        # x shape: (batch_size, seq_len, input_dim)
-        lstm_out, _ = self.lstm(x)  # (batch_size, seq_len, hidden_dim*2)
-        
-        # Apply attention to focus on important features
-        attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
-        
-        # Global average pooling
-        pooled = torch.mean(attn_out, dim=1)  # (batch_size, hidden_dim*2)
-        
-        # Classification
-        output = self.classifier(pooled)
-        return output
+    def __init__(self, CNN_embed_dim=384, h_RNN_layers=3, h_RNN=256, h_FC_dim=128, drop_p=0.3, num_classes=50):
+        super(LSTMClassifier, self).__init__()
+        self.LSTM = nn.LSTM(input_size=CNN_embed_dim,
+                            hidden_size=h_RNN,
+                            num_layers=h_RNN_layers,
+                            batch_first=True)
+        self.fc1 = nn.Linear(h_RNN, h_FC_dim)
+        self.fc2 = nn.Linear(h_FC_dim, num_classes)
+        self.drop_p = drop_p
+
+    def forward(self, x_RNN):
+        self.LSTM.flatten_parameters()
+        RNN_out, _ = self.LSTM(x_RNN, None)
+        x = self.fc1(RNN_out[:, -1, :])
+        x = F.relu(x)
+        x = F.dropout(x, p=self.drop_p, training=self.training)
+        x = self.fc2(x)
+        return x
 
 
 class FeatureAdapter(nn.Module):
