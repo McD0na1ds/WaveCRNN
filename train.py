@@ -20,9 +20,9 @@ def validate_model(model, dataloader, device):
     all_labels = []
     
     with torch.no_grad():
-        for images, labels in dataloader:
-            images, labels = images.to(device), labels.to(device)
-            outputs, _ = model(images)
+        for sequences, labels in dataloader:  # sequences now have shape (batch, seq_len, channels, height, width)
+            sequences, labels = sequences.to(device), labels.to(device)
+            outputs, _ = model(sequences)
             _, preds = torch.max(outputs, 1)
             
             all_preds.extend(preds.cpu().numpy())
@@ -38,17 +38,18 @@ def train_model():
     print(f"Using device: {device}")
     
     # Hyperparameters
-    batch_size = 16
+    batch_size = 4  # Reduced batch size due to sequence processing
     num_epochs = 50
     learning_rate = 1e-4
     validate_every = 5  # Validate every 5 epochs
+    sequence_length = 60  # Number of images per sequence
     
     # Create datasets and dataloaders
     train_dir = Path('./datasets/train')
     val_dir = Path('./datasets/val')
     
     train_loader, val_loader, class_to_idx = get_wave_dataloaders(
-        train_dir, val_dir, batch_size=batch_size
+        train_dir, val_dir, batch_size=batch_size, sequence_length=sequence_length
     )
     
     print(f"Classes: {class_to_idx}")
@@ -56,7 +57,7 @@ def train_model():
     print(f"Validation samples: {len(val_loader.dataset)}")
     
     # Initialize student model
-    student_model = StudentModel(num_classes=len(class_to_idx)).to(device)
+    student_model = StudentModel(num_classes=len(class_to_idx), sequence_length=sequence_length).to(device)
     
     # Load teacher model (DINOv2)
     teacher_model = get_dinov2_model('dinov2_vits14')
@@ -116,27 +117,37 @@ def train_model():
         
         epoch_start_time = time.time()
         
-        for batch_idx, (images, labels) in enumerate(train_loader):
-            images, labels = images.to(device), labels.to(device)
+        for batch_idx, (sequences, labels) in enumerate(train_loader):
+            sequences, labels = sequences.to(device), labels.to(device)
             
             optimizer.zero_grad()
             
             # Forward pass with mixed precision
             with autocast():
-                # Student forward pass
-                student_logits, student_features = student_model(images)
+                # Student forward pass - x is now (batch_size, seq_len, channels, height, width)
+                student_logits, student_features = student_model(sequences)
                 
                 # Teacher forward pass (no gradient)
                 with torch.no_grad():
-                    # DINOv2 returns a dict, we need the last hidden state
-                    # For simplicity, we'll use the patch tokens (without cls token)
-                    intermediate_layers = teacher_model.get_intermediate_layers(images, n=1)
-                    teacher_features = intermediate_layers[0][:, 1:]  # Remove cls token
+                    # Process each frame in the sequence through the teacher model
+                    batch_size, seq_len = sequences.shape[:2]
+                    # Reshape for teacher: (batch_size * seq_len, channels, height, width)
+                    sequences_flat = sequences.view(batch_size * seq_len, *sequences.shape[2:])
+                    
+                    # DINOv2 returns intermediate layers
+                    intermediate_layers = teacher_model.get_intermediate_layers(sequences_flat, n=1)
+                    teacher_features_flat = intermediate_layers[0][:, 1:]  # Remove cls token
+                    
+                    # Reshape back to sequence and average across time
+                    # teacher_features_flat: (batch_size * seq_len, num_patches, feature_dim)
+                    num_patches, feature_dim = teacher_features_flat.shape[1], teacher_features_flat.shape[2]
+                    teacher_features_seq = teacher_features_flat.view(batch_size, seq_len, num_patches, feature_dim)
+                    # Average across sequence for distillation
+                    teacher_features = torch.mean(teacher_features_seq, dim=1)  # (batch_size, num_patches, feature_dim)
                     
                     # Resize teacher features to match student features if needed
                     if teacher_features.shape[1] != student_features.shape[1]:
                         # Use interpolation to match dimensions
-                        # teacher_features: [B, N_t, D] -> [B, N_s, D]
                         teacher_features = F.interpolate(
                             teacher_features.permute(0, 2, 1), 
                             size=student_features.shape[1], 

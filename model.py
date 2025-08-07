@@ -67,33 +67,53 @@ class LightweightViT(nn.Module):
         return self.head(cls_token), x[:, 1:]  # Return classification and patch tokens
 
 
+# class LSTMClassifier(nn.Module):
+#     """LSTM module for temporal analysis of patch features"""
+#     def __init__(self, input_dim=384, hidden_dim=256, num_layers=2, num_classes=3, dropout=0.5):
+#         super().__init__()
+#         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers,
+#                            batch_first=True, dropout=dropout, bidirectional=True)
+#         self.attention = nn.MultiheadAttention(hidden_dim * 2, num_heads=8, batch_first=True)
+#         self.classifier = nn.Sequential(
+#             nn.Linear(hidden_dim * 2, hidden_dim),
+#             nn.ReLU(),
+#             nn.Dropout(dropout),
+#             nn.Linear(hidden_dim, num_classes)
+#         )
+#
+#     def forward(self, x):
+#         # x shape: (batch_size, seq_len, input_dim)
+#         lstm_out, _ = self.lstm(x)  # (batch_size, seq_len, hidden_dim*2)
+#
+#         # Apply attention to focus on important features
+#         attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
+#
+#         # Global average pooling
+#         pooled = torch.mean(attn_out, dim=1)  # (batch_size, hidden_dim*2)
+#
+#         # Classification
+#         output = self.classifier(pooled)
+#         return output
+
 class LSTMClassifier(nn.Module):
-    """LSTM module for temporal analysis of patch features"""
-    def __init__(self, input_dim=384, hidden_dim=256, num_layers=2, num_classes=3, dropout=0.5):
-        super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, 
-                           batch_first=True, dropout=dropout, bidirectional=True)
-        self.attention = nn.MultiheadAttention(hidden_dim * 2, num_heads=8, batch_first=True)
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_classes)
-        )
-        
-    def forward(self, x):
-        # x shape: (batch_size, seq_len, input_dim)
-        lstm_out, _ = self.lstm(x)  # (batch_size, seq_len, hidden_dim*2)
-        
-        # Apply attention to focus on important features
-        attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
-        
-        # Global average pooling
-        pooled = torch.mean(attn_out, dim=1)  # (batch_size, hidden_dim*2)
-        
-        # Classification
-        output = self.classifier(pooled)
-        return output
+    def __init__(self, CNN_embed_dim=384, h_RNN_layers=3, h_RNN=256, h_FC_dim=128, drop_p=0.3, num_classes=50):
+        super(LSTMClassifier, self).__init__()
+        self.LSTM = nn.LSTM(input_size=CNN_embed_dim,
+                            hidden_size=h_RNN,
+                            num_layers=h_RNN_layers,
+                            batch_first=True)
+        self.fc1 = nn.Linear(h_RNN, h_FC_dim)
+        self.fc2 = nn.Linear(h_FC_dim, num_classes)
+        self.drop_p = drop_p
+
+    def forward(self, x_RNN):
+        self.LSTM.flatten_parameters()
+        RNN_out, _ = self.LSTM(x_RNN, None)
+        x = self.fc1(RNN_out[:, -1, :])
+        x = F.relu(x)
+        x = F.dropout(x, p=self.drop_p, training=self.training)
+        x = self.fc2(x)
+        return x
 
 
 class FeatureAdapter(nn.Module):
@@ -107,23 +127,56 @@ class FeatureAdapter(nn.Module):
 
 
 class StudentModel(nn.Module):
-    """Complete student model combining lightweight ViT and LSTM"""
-    def __init__(self, num_classes=3):
+    """Complete student model combining lightweight ViT and LSTM for sequence processing"""
+    def __init__(self, num_classes=3, sequence_length=60):
         super().__init__()
         self.vit = LightweightViT(num_classes=num_classes)
         self.lstm = LSTMClassifier(num_classes=num_classes)
+        self.sequence_length = sequence_length
         
     def forward(self, x):
-        # Get classification output and patch features from ViT
-        cls_output, patch_features = self.vit(x)
+        """
+        Forward pass for sequence of images
+        Args:
+            x: Tensor of shape (batch_size, sequence_length, channels, height, width)
+        Returns:
+            combined_output: Classification logits
+            sequence_features: Features for each frame in the sequence
+        """
+        batch_size, seq_len, channels, height, width = x.shape
         
-        # Process patch features with LSTM
-        lstm_output = self.lstm(patch_features)
+        # Reshape to process all frames at once: (batch_size * seq_len, channels, height, width)
+        x_flat = x.view(batch_size * seq_len, channels, height, width)
         
-        # Combine outputs (can be adjusted based on needs)
-        combined_output = cls_output + lstm_output
+        # Get ViT features for all frames
+        cls_outputs, patch_features = self.vit(x_flat)
         
-        return combined_output, patch_features
+        # Reshape back to sequence format
+        # cls_outputs: (batch_size * seq_len, num_classes) -> (batch_size, seq_len, num_classes)
+        cls_outputs = cls_outputs.view(batch_size, seq_len, -1)
+        
+        # patch_features: (batch_size * seq_len, num_patches, feature_dim) -> (batch_size, seq_len, num_patches, feature_dim)
+        num_patches, feature_dim = patch_features.shape[1], patch_features.shape[2]
+        patch_features = patch_features.view(batch_size, seq_len, num_patches, feature_dim)
+        
+        # For LSTM, we'll use the average of patch features for each frame
+        # This gives us a sequence of frame-level features
+        frame_features = torch.mean(patch_features, dim=2)  # (batch_size, seq_len, feature_dim)
+        
+        # Process frame sequence with LSTM
+        lstm_output = self.lstm(frame_features)
+        
+        # Average the ViT classification outputs across the sequence
+        avg_cls_output = torch.mean(cls_outputs, dim=1)
+        
+        # Combine ViT and LSTM outputs
+        combined_output = avg_cls_output + lstm_output
+        
+        # Return features in the format expected by the loss function
+        # We'll return the mean patch features across the sequence for distillation
+        sequence_features = torch.mean(patch_features, dim=1)  # (batch_size, num_patches, feature_dim)
+        
+        return combined_output, sequence_features
 
 
 def get_dinov2_model(model_name='dinov2_vits14'):
