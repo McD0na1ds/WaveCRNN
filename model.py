@@ -179,7 +179,7 @@ class StudentModel(nn.Module):
         return combined_output, sequence_features
 
 
-def get_dinov2_model(model_name='dinov2_vits14'):
+def get_dinov2_model(model_name='dinov2_vitb14'):
     """Load pre-trained DINOv2 model"""
     try:
         import torch.hub
