@@ -16,23 +16,42 @@ from model import StudentModel, get_dinov2_model, FeatureAdapter
 from loss import HeterogeneousKnowledgeDistillationLoss
 from dataset import get_wave_dataloaders
 
-def validate_model(model, dataloader, device):
-    """Validate the model and return accuracy"""
+def validate_model(model, dataloader, device, criterion=None):
+    """Validate the model and return loss and accuracy"""
     model.eval()
     all_preds = []
     all_labels = []
+    total_loss = 0.0
+    num_batches = 0
+    
+    # Use simple CrossEntropyLoss if no criterion provided
+    if criterion is None:
+        criterion = nn.CrossEntropyLoss()
     
     with torch.no_grad():
         for images, labels in dataloader:
             images, labels = images.to(device), labels.to(device)
             outputs, _ = model(images)
+            
+            # Calculate loss
+            if hasattr(criterion, 'task_loss'):
+                # If it's our knowledge distillation loss, just use task loss for validation
+                loss = criterion.task_loss(outputs, labels)
+            else:
+                # Simple cross entropy loss
+                loss = criterion(outputs, labels)
+            
+            total_loss += loss.item()
+            num_batches += 1
+            
             _, preds = torch.max(outputs, 1)
             
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
     
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
     accuracy = accuracy_score(all_labels, all_preds)
-    return accuracy
+    return avg_loss, accuracy
 
 def train_model():
     """Main training function"""
@@ -62,7 +81,7 @@ def train_model():
     student_model = StudentModel(num_classes=len(class_to_idx)).to(device)
     
     # Load teacher model (DINOv2)
-    teacher_model = get_dinov2_model('dinov2_vits14')
+    teacher_model = get_dinov2_model('dinov2_vitb14')
     if teacher_model is None:
         print("Failed to load teacher model. Exiting.")
         return
@@ -73,8 +92,8 @@ def train_model():
         param.requires_grad = False  # Freeze teacher model
     
     # Initialize feature adapter (student dim to teacher dim)
-    # DINOv2 small has 384 dim, our student has 384 dim, so identity adapter
-    feature_adapter = FeatureAdapter(384, 384).to(device)
+    # DINOv2 base has 768 dim, our student has 384 dim
+    feature_adapter = FeatureAdapter(384, 768).to(device)
     
     # Loss function
     criterion = HeterogeneousKnowledgeDistillationLoss(
@@ -99,9 +118,11 @@ def train_model():
     
     # Training loop
     best_val_acc = 0.0
+    best_val_loss = float('inf')
     training_history = {
         'train_loss': [],
         'val_acc': [],
+        'val_loss': [],
         'task_loss': [],
         'feature_loss': [],
         'relation_loss': []
@@ -195,25 +216,35 @@ def train_model():
         # Validation phase
         if (epoch + 1) % validate_every == 0:
             print("Validating model...")
-            val_acc = validate_model(student_model, val_loader, device)
+            val_loss, val_acc = validate_model(student_model, val_loader, device, criterion)
             training_history['val_acc'].append(val_acc)
+            training_history['val_loss'].append(val_loss)
             
-            print(f'Validation Accuracy: {val_acc:.4f}')
+            print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.4f}')
             
             # Save best model
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
+                best_val_loss = val_loss
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': student_model.state_dict(),
                     'adapter_state_dict': feature_adapter.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'best_val_acc': best_val_acc,
+                    'best_val_loss': best_val_loss,
                 }, 'best_student_model.pth')
-                print(f'New best model saved with validation accuracy: {best_val_acc:.4f}')
+                
+                # Save best validation metrics as numpy files
+                np.save('best_validation_loss.npy', np.array([best_val_loss]))
+                np.save('best_validation_accuracy.npy', np.array([best_val_acc]))
+                
+                print(f'New best model saved with validation accuracy: {best_val_acc:.4f}, loss: {best_val_loss:.4f}')
+                print(f'Best validation metrics saved as numpy files')
     
     print("Training completed!")
     print(f"Best validation accuracy: {best_val_acc:.4f}")
+    print(f"Best validation loss: {best_val_loss:.4f}")
     
     # Save final model
     torch.save({
@@ -221,6 +252,7 @@ def train_model():
         'adapter_state_dict': feature_adapter.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'best_val_acc': best_val_acc,
+        'best_val_loss': best_val_loss,
     }, 'final_student_model.pth')
     
     print("Final model saved as 'final_student_model.pth'")
