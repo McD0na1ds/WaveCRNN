@@ -13,11 +13,11 @@ Our solution addresses the challenge of knowledge distillation between heterogen
 ## Model Architecture
 
 ### Teacher Model
-- Pre-trained DINOv2 (ViT-S/14 with 384-dim features)
+- Pre-trained DINOv2 Base (ViT-B/14 with 768-dim features) 
 - Processes each frame individually, features averaged across sequence
 
 ### Student Model
-- Lightweight ViT encoder (custom implementation with 14x14 patches to match DINOv2)
+- Lightweight ViT encoder (custom implementation with 14x14 patches, 768-dim to match DINOv2 Base)
 - **Sequence Processing**: Each of 60 images processed through ViT individually
 - LSTM module for temporal analysis of frame-level features
 - Attention mechanism for feature focusing
@@ -54,26 +54,40 @@ pip install -r requirements.txt
 
 ## Training
 
-To train the model:
+### 5-Fold Cross Validation Training (Recommended)
+For robust model evaluation with early stopping and comprehensive metrics tracking:
+```bash
+python train_kfold.py
+```
+
+This will:
+- Train on 5 different data splits for robust evaluation
+- Use DINOv2 Base (768-dim) teacher model
+- Apply early stopping with patience mechanism
+- Save per-epoch metrics (accuracy/loss) to .npy files
+- Save best model weights for each fold
+- Generate comprehensive 5-fold CV results
+
+### Single Training Run (Legacy)
+To train with a single train/val split:
 ```bash
 python train.py
 ```
 
-The training script will:
-- Train for 50 epochs with sequence processing
-- Validate every 5 epochs
-- Save the best model based on validation accuracy
-- Use reduced batch size (4) due to sequence memory requirements
-- Save the final model after training
+For detailed information about the 5-fold training system, see [KFOLD_TRAINING_GUIDE.md](KFOLD_TRAINING_GUIDE.md).
 
 ## Key Features
 
 - **Video Sequence Processing**: 60 images per sample for temporal understanding
 - **Temporal Feature Learning**: LSTM processes frame-level ViT features
+- **5-Fold Cross Validation**: Robust evaluation with `train_kfold.py`
+- **Early Stopping**: Automatic training termination with patience mechanism
+- **Comprehensive Metrics**: Per-epoch accuracy/loss saved to .npy files
+- **DINOv2 Base Teacher**: Upgraded to 768-dim features for better knowledge distillation
 - Mixed precision training for efficiency
 - Cosine learning rate scheduling
 - Comprehensive logging of loss components
-- Best model checkpointing
+- Best model checkpointing per fold
 - Feature dimension matching between teacher and student models
 
 ## Testing

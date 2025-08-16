@@ -57,10 +57,10 @@ def train_model():
     print(f"Validation samples: {len(val_loader.dataset)}")
     
     # Initialize student model
-    student_model = StudentModel(num_classes=len(class_to_idx), sequence_length=sequence_length).to(device)
+    student_model = StudentModel(num_classes=len(class_to_idx), sequence_length=sequence_length, embed_dim=768).to(device)
     
-    # Load teacher model (DINOv2)
-    teacher_model = get_dinov2_model('dinov2_vits14')
+    # Load teacher model (DINOv2 Base)
+    teacher_model = get_dinov2_model('dinov2_vitb14')
     if teacher_model is None:
         print("Failed to load teacher model. Exiting.")
         return
@@ -71,8 +71,8 @@ def train_model():
         param.requires_grad = False  # Freeze teacher model
     
     # Initialize feature adapter (student dim to teacher dim)
-    # DINOv2 small has 384 dim, our student has 384 dim, so identity adapter
-    feature_adapter = FeatureAdapter(384, 384).to(device)
+    # DINOv2 base has 768 dim, our student has 768 dim, so identity adapter
+    feature_adapter = FeatureAdapter(768, 768).to(device)
     
     # Loss function
     criterion = HeterogeneousKnowledgeDistillationLoss(
