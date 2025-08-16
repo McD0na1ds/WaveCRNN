@@ -11,7 +11,7 @@ def test_model_forward():
     dummy_input = torch.randn(batch_size, sequence_length, 3, 224, 224)
     
     # Test student model
-    student_model = StudentModel(num_classes=3, sequence_length=sequence_length)
+    student_model = StudentModel(num_classes=3, sequence_length=sequence_length, embed_dim=768)
     student_logits, student_features = student_model(dummy_input)
     
     print(f"Input shape: {dummy_input.shape}")
@@ -19,7 +19,7 @@ def test_model_forward():
     print(f"Student features shape: {student_features.shape}")
     
     # Test teacher model with sequences
-    teacher_model = get_dinov2_model('dinov2_vits14')
+    teacher_model = get_dinov2_model('dinov2_vitb14')
     if teacher_model is not None:
         teacher_model.eval()
         with torch.no_grad():
@@ -49,7 +49,7 @@ def test_model_forward():
         print(f"Teacher features shape: {teacher_features.shape}")
         
         # Test feature adapter
-        adapter = FeatureAdapter(384, 384)  # Student dim to teacher dim
+        adapter = FeatureAdapter(768, 768)  # Student dim to teacher dim
         student_features_adapted = adapter(student_features)
         print(f"Adapted student features shape: {student_features_adapted.shape}")
         

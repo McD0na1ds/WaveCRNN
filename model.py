@@ -7,12 +7,12 @@ import math
 
 class LightweightViT(nn.Module):
     """Lightweight Vision Transformer for student model"""
-    def __init__(self, img_size=224, patch_size=14, in_chans=3, embed_dim=384, depth=6, num_heads=6, 
+    def __init__(self, img_size=224, patch_size=14, in_chans=3, embed_dim=768, depth=6, num_heads=12, 
                  mlp_ratio=4., num_classes=3):
         super().__init__()
         self.patch_embed = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        # DINOv2 uses 16x16 patches for 224x224 images, resulting in 256 patches + 1 cls token = 257
+        # DINOv2 uses 14x14 patches for 224x224 images, resulting in 256 patches + 1 cls token = 257
         self.pos_embed = nn.Parameter(torch.zeros(1, (img_size // patch_size) ** 2 + 1, embed_dim))
         
         # Transformer blocks
@@ -96,7 +96,7 @@ class LightweightViT(nn.Module):
 #         return output
 
 class LSTMClassifier(nn.Module):
-    def __init__(self, CNN_embed_dim=384, h_RNN_layers=3, h_RNN=256, h_FC_dim=128, drop_p=0.3, num_classes=50):
+    def __init__(self, CNN_embed_dim=768, h_RNN_layers=3, h_RNN=256, h_FC_dim=128, drop_p=0.3, num_classes=50):
         super(LSTMClassifier, self).__init__()
         self.LSTM = nn.LSTM(input_size=CNN_embed_dim,
                             hidden_size=h_RNN,
@@ -128,11 +128,12 @@ class FeatureAdapter(nn.Module):
 
 class StudentModel(nn.Module):
     """Complete student model combining lightweight ViT and LSTM for sequence processing"""
-    def __init__(self, num_classes=3, sequence_length=60):
+    def __init__(self, num_classes=3, sequence_length=60, embed_dim=768):
         super().__init__()
-        self.vit = LightweightViT(num_classes=num_classes)
-        self.lstm = LSTMClassifier(num_classes=num_classes)
+        self.vit = LightweightViT(num_classes=num_classes, embed_dim=embed_dim)
+        self.lstm = LSTMClassifier(CNN_embed_dim=embed_dim, num_classes=num_classes)
         self.sequence_length = sequence_length
+        self.embed_dim = embed_dim
         
     def forward(self, x):
         """
@@ -179,7 +180,7 @@ class StudentModel(nn.Module):
         return combined_output, sequence_features
 
 
-def get_dinov2_model(model_name='dinov2_vits14'):
+def get_dinov2_model(model_name='dinov2_vitb14'):
     """Load pre-trained DINOv2 model"""
     try:
         import torch.hub
