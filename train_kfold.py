@@ -58,21 +58,10 @@ def train_fold(fold_num, train_dir, val_dir, device, hyperparams):
     # Load teacher model (DINOv2 Base)
     teacher_model = get_dinov2_model('dinov2_vitb14')
     if teacher_model is None:
-        print("Failed to load teacher model. Using mock teacher.")
-        # Create a mock teacher for testing
-        class MockTeacher(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.embed_dim = 768
-                
-            def get_intermediate_layers(self, x, n=1):
-                batch_size = x.shape[0]
-                # Mock teacher features: (batch_size, num_patches + 1, embed_dim)
-                mock_features = torch.randn(batch_size, 257, 768, device=x.device)
-                return [mock_features]
-        
-        teacher_model = MockTeacher().to(device)
+        print("Failed to load teacher model. Exiting.")
+        return
     
+    teacher_model = teacher_model.to(device)
     teacher_model.eval()  # Set to evaluation mode
     for param in teacher_model.parameters():
         param.requires_grad = False  # Freeze teacher model
@@ -84,8 +73,8 @@ def train_fold(fold_num, train_dir, val_dir, device, hyperparams):
     # Loss function
     criterion = HeterogeneousKnowledgeDistillationLoss(
         alpha=1.0,    # Task loss weight
-        beta=0.5,     # Feature imitation loss weight
-        gamma=0.3,    # Relational knowledge loss weight
+        beta=1.0,     # Feature imitation loss weight
+        gamma=1.0,    # Relational knowledge loss weight
         temperature=4.0
     )
     
@@ -293,12 +282,12 @@ def train_kfold():
     
     # Hyperparameters
     hyperparams = {
-        'batch_size': 4,  # Reduced batch size due to sequence processing
-        'num_epochs': 50,
+        'batch_size': 16,  # Reduced batch size due to sequence processing
+        'num_epochs': 200,
         'learning_rate': 1e-4,
-        'validate_every': 5,  # Validate every 5 epochs
+        'validate_every': 1,  # Validate every 5 epochs
         'sequence_length': 60,  # Number of images per sequence
-        'patience': 10,  # Early stopping patience
+        'patience': 100,  # Early stopping patience
     }
     
     print("Hyperparameters:")
@@ -325,6 +314,8 @@ def train_kfold():
     overall_best_fold = -1
     
     for fold in range(num_folds):
+        fold = 4
+        
         # Define paths for this fold
         fold_dir = datasets_root / f'fold_{fold}'
         train_dir = fold_dir / 'train'
